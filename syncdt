@@ -1,0 +1,152 @@
+#!/bin/bash
+
+function copy {
+  [ ! -f "$sync_file" ] && error "---> No $sync_file file in current directory" && exit 1
+
+  msg "Copying files"
+  for file in $(cat $sync_file); do
+    file=$(echo $file | sed "s@~@$HOME@")
+    target=$PWD$(echo $file | sed "s@$HOME@@")
+    targetdir=${target%/*}
+
+    [ ! -d $targetdir ] && mkdir -p $targetdir
+    if [ -f $file ]; then
+      cp $file $target && echo $file "sync'd to" $target
+      [ $? -ne 0 ] && error "\n$file FAILED to sync"
+    else
+      cp $file $targetdir && echo $file "sync'd to" $target
+      [ $? -ne 0 ] && error "\n$file FAILED to sync"
+    fi
+  done
+}
+
+function commit {
+  msg "Committing to $branch_name"
+
+  inFile .git/info/exclude $sync_file
+  [ $? -eq 0 ] && echo "$sync_file" >> .git/info/exclude
+  [ $? -eq 0 ] && msg "Added $sync_file to .git/info/exclude"
+
+  git add -A || exit 1
+  git commit || msg "Nothing to commit"
+}
+
+function push {
+  msg "Updating remote status"
+  git remote update
+  if [ $(git status  -uno | grep ahead | grep $branch_name | wc -l) -ge 1 ]; then
+    msg "Pushing to remote"
+    git push || exit 1
+  fi
+
+  msg "Done!"
+}
+
+function showhelp {
+cat << HERE
+Usage syncdt [OPTION]..
+  -c Commit to current git branch
+  -p Push to remote
+  -a Add file to sync to the sync.files file
+  -f Specify the file with the list of files and directories to be synced
+HERE
+exit 0
+}
+
+function inFile {
+  [ -f $1 ] || return 0
+  for line in $(cat $1 &> /dev/null); do
+    [ $line = "$2" ] && return 1
+  done
+}
+
+function msg {
+  echo -e "\033[35;1m\n--->  $1\033[0m"
+}
+
+function error {
+  echo -e "\033[31;1m$1\033[0m"
+}
+
+function add {
+  inFile $sync_file $1 && echo $1 >> $sync_file
+}
+
+function setfile {
+  sync_file=$1
+}
+
+branch_name="$(git symbolic-ref HEAD 2>/dev/null)" || branch_name="(unnamed branch)"
+branch_name=${branch_name##refs/heads/}
+
+sync_file=sync.files
+cmd=none
+eat=false
+
+for arg in $@; do
+  [ ${arg:0:1} != '-' ] && eat=true
+  if $eat; then
+    funcs+=("$cmd $arg")
+    eat=false
+    continue
+  fi
+  case $arg in
+    -c)
+      funcs+=("commit")
+      ;;
+    -p)
+      funcs+=("push")
+      ;;
+    -cp)
+      funcs+=("commit")
+      funcs+=("push")
+      ;;
+    -pc)
+      funcs+=("commit")
+      funcs+=("push")
+      ;;
+    -a)
+      cmd=add
+      ;;
+    -f)
+      cmd=setfile
+      ;;
+    -h)
+      showhelp
+      ;;
+    --help)
+      showhelp
+      ;;
+  esac
+done
+
+for i in ${!funcs[@]}; do
+  case ${funcs[$i]} in
+    setfile*)
+      calls+=("${funcs[$i]}")
+      break
+      ;;
+  esac
+done
+for i in ${!funcs[@]}; do
+  case ${funcs[$i]} in
+    add*)
+      calls+=("${funcs[$i]}")
+      ;;
+  esac
+done
+
+calls+=('copy')
+
+for i in ${!funcs[@]}; do
+  [ "${funcs[$i]}" = "commit" ] && calls+=("commit") && break
+done
+for i in ${!funcs[@]}; do
+  [ "${funcs[$i]}" = "push" ] && calls+=("push") && break
+done
+
+for i in ${!calls[@]}; do
+  ${calls[$i]}
+done
+
+exit 0
