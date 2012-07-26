@@ -7,7 +7,7 @@ function copy {
   for file in $(cat $sync_file); do
     file=$(echo $file | sed "s@~@$HOME@")
     local currtarget=$target$(echo $file | sed "s@$HOME@@")
-    local currtargetdir=${target%/*}
+    local currtargetdir=${currtarget%/*}
 
     [ ! -d $currtargetdir ] && mkdir -p $currtargetdir
     if [ -f $file ]; then
@@ -33,13 +33,12 @@ function commit {
 
 function push {
   msg "Updating remote status" true
+
   git remote update
   if [ $(git status  -uno | grep ahead | grep $branch_name | wc -l) -ge 1 ]; then
     msg "Pushing to remote" true
     git push || exit 1
   fi
-
-  msg "Done!" false
 }
 
 function showhelp {
@@ -162,4 +161,4 @@ for i in ${!funcs[@]}; do
   [ "${funcs[$i]}" = "push" ] && push && break
 done
 
-exit 0
+msg "Done!" false && exit 0
