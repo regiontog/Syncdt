@@ -1,9 +1,9 @@
 #!/bin/bash
 
 function copy {
-  [ ! -f "$sync_file" ] && error "---> No $sync_file file in current directory" && exit 1
+  [ ! -f "$sync_file" ] && error "---> No $sync_file file in current directory" false && exit 1
 
-  msg "Copying files"
+  msg "Copying files" false
   for file in $(cat $sync_file); do
     file=$(echo $file | sed "s@~@$HOME@")
     local currtarget=$target$(echo $file | sed "s@$HOME@@")
@@ -12,34 +12,34 @@ function copy {
     [ ! -d $currtargetdir ] && mkdir -p $currtargetdir
     if [ -f $file ]; then
       cp $file $currtarget && echo $file "sync'd to" $currtarget
-      [ $? -ne 0 ] && error "$file FAILED to sync"
+      [ $? -ne 0 ] && error "$file FAILED to sync" false
     else
       cp $file $currtargetdir && echo $file "sync'd to" $currtarget
-      [ $? -ne 0 ] && error "$file FAILED to sync"
+      [ $? -ne 0 ] && error "$file FAILED to sync" false
     fi
   done
 }
 
 function commit {
-  msg "Committing to $branch_name"
+  msg "Committing to $branch_name" true
 
   inFile .git/info/exclude $sync_file
   [ $? -eq 0 ] && echo "$sync_file" >> .git/info/exclude
   [ $? -eq 0 ] && msg "Added $sync_file to .git/info/exclude"
 
   git add -A || exit 1
-  git commit || msg "Nothing to commit"
+  git commit || msg "Nothing to commit" false
 }
 
 function push {
-  msg "Updating remote status"
+  msg "Updating remote status" true
   git remote update
   if [ $(git status  -uno | grep ahead | grep $branch_name | wc -l) -ge 1 ]; then
-    msg "Pushing to remote"
+    msg "Pushing to remote" true
     git push || exit 1
   fi
 
-  msg "Done!"
+  msg "Done!" false
 }
 
 function showhelp {
@@ -59,13 +59,16 @@ function inFile {
   for line in $(cat $1); do
     [ $line = "$2" ] && return 1
   done
+  return 0
 }
 
 function msg {
-  echo -e "\033[35;1m\n--->  $1\033[0m"
+  $2 && echo
+  echo -e "\033[34;1m--->  $1\033[0m"
 }
 
 function error {
+  $2 && echo
   echo -e "\033[31;1m$1\033[0m"
 }
 
@@ -87,13 +90,10 @@ branch_name=${branch_name##refs/heads/}
 sync_file=sync.files
 target=$PWD
 cmd=none
-eat=false
 
 for arg in $@; do
-  [ ${arg:0:1} != '-' ] && eat=true
-  if $eat; then
+  if [ ${arg:0:1} != '-' ]; then
     funcs+=("$cmd $arg")
-    eat=false
     continue
   fi
   case $arg in
@@ -132,7 +132,7 @@ done
 for i in ${!funcs[@]}; do
   case ${funcs[$i]} in
     setfile*)
-      calls+=("${funcs[$i]}")
+      ${funcs[$i]}
       break
       ;;
   esac
@@ -140,7 +140,7 @@ done
 for i in ${!funcs[@]}; do
   case ${funcs[$i]} in
     settarget*)
-      calls+=("${funcs[$i]}")
+      ${funcs[$i]}
       break
       ;;
   esac
@@ -148,22 +148,18 @@ done
 for i in ${!funcs[@]}; do
   case ${funcs[$i]} in
     add*)
-      calls+=("${funcs[$i]}")
+      ${funcs[$i]}
       ;;
   esac
 done
 
-calls+=('copy')
+copy
 
 for i in ${!funcs[@]}; do
-  [ "${funcs[$i]}" = "commit" ] && calls+=("commit") && break
+  [ "${funcs[$i]}" = "commit" ] && commit && break
 done
 for i in ${!funcs[@]}; do
-  [ "${funcs[$i]}" = "push" ] && calls+=("push") && break
-done
-
-for i in ${!calls[@]}; do
-   ${calls[$i]}
+  [ "${funcs[$i]}" = "push" ] && push && break
 done
 
 exit 0
