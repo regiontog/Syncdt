@@ -18,7 +18,7 @@ function sync {
 }
 
 function copy {
-  for file in $(find $1 -type f | grep -Ev "(${exclude_list:1})"); do
+  for file in $(find $1 -type f | grep -Ev "(${exclude_list:1})" || { [ "$exclude_list" = "" ] && find $1 -type f; }); do
     local currtarget=$target${file##$rootdir}
     mkdir -p $(dirname $currtarget) && cp -u $file $currtarget || return 1
   done
@@ -90,6 +90,7 @@ function error {
 function exclude {
   eval ex=$1
   exclude_list="${exclude_list}|$ex"
+  echo ${exclude_list:1}
 }
 
 function add {
