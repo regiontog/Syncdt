@@ -19,7 +19,6 @@ function sync {
 
 function copy {
   for file in $(find $1 -type f | grep -Ev "(${exclude_list:1})"); do
-    echo $file
     local currtarget=$target${file##$rootdir}
     mkdir -p $(dirname $currtarget) && cp -u $file $currtarget || return 1
   done
