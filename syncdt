@@ -1,31 +1,34 @@
 #!/bin/bash
 
-function copy {
+function sync {
   [ ! -f "$sync_file" ] && error "---> No $sync_file file in current directory" false && exit 1
 
-  msg "Copying files" false
-  for file in $(cat $sync_file); do
-    file=$(echo $file | sed "s@~@$HOME@")
-    local currtarget=$target$(echo $file | sed "s@$HOME@@")
-    local currtargetdir=${currtarget%/*}
+  for line in $(cat $sync_file); do
+    [ ${line:0:1} = '!' ] && exclude ${line:1}
+  done
 
-    [ ! -d $currtargetdir ] && mkdir -p $currtargetdir
-    if [ -f $file ]; then
-      cp $file $currtarget && echo $file "sync'd to" $currtarget
-      [ $? -ne 0 ] && error "$file FAILED to sync" false
-    else
-      cp $file $currtargetdir && echo $file "sync'd to" $currtarget
-      [ $? -ne 0 ] && error "$file FAILED to sync" false
-    fi
+  msg "Copying files" false
+  for line in $(cat $sync_file); do
+    [ ${line:0:1} = '!' ] && continue
+    [ ${line:0:1} = '#' ] && continue
+    eval line=$line
+
+    copy $line && echo $line "sync'd" || error "$line FAILED to sync" false
+  done
+}
+
+function copy {
+  for file in $(find $1 -type f | grep -Ev "(${exclude_list:1})"); do
+    echo $file
+    local currtarget=$target${file##$rootdir}
+    mkdir -p $(dirname $currtarget) && cp -u $file $currtarget || return 1
   done
 }
 
 function commit {
   msg "Committing to $branch_name" true
 
-  inFile .git/info/exclude $sync_file
-  [ $? -eq 0 ] && echo "$sync_file" >> .git/info/exclude
-  [ $? -eq 0 ] && msg "Added $sync_file to .git/info/exclude"
+  inFile .git/info/exclude $sync_file || echo "$sync_file" >> .git/info/exclude && msg "Added $sync_file to .git/info/exclude"
 
   git add -A || exit 1
   git commit || msg "Nothing to commit" false
@@ -49,16 +52,30 @@ Usage syncdt [OPTION]..
   -a Add file to sync to the sync.files file
   -f Specify the file with the list of files and directories to be synced
   -t Specity the target directory
+  -r Specify a prefix to remove from file path; default is $HOME
+  -e Exclude file or directory
 HERE
 exit 0
 }
 
-function inFile {
-  [ ! -f $1 ] && return 0
-  for line in $(cat $1); do
-    [ $line = "$2" ] && return 1
+function findandexec {
+  for i in ${!funcs[@]}; do
+  case ${funcs[$i]} in
+    ${1}*)
+      eval ${funcs[$i]}
+      $2 && break
+      ;;
+  esac
   done
-  return 0
+}
+
+function inFile {
+  [ ! -f $1 ] && return 1
+  for line in $(cat $1); do
+    eval line=$line
+    [ ${line:0:1} != "#" -a $line = "$2" ] && return 0
+  done
+  return 1
 }
 
 function msg {
@@ -71,8 +88,13 @@ function error {
   echo -e "\033[31;1m$1\033[0m"
 }
 
+function exclude {
+  eval ex=$1
+  exclude_list="${exclude_list}|$ex"
+}
+
 function add {
-  inFile $sync_file $1 && echo $1 >> $sync_file
+  inFile $sync_file $1 || echo $1 >> $sync_file
 }
 
 function setfile {
@@ -83,10 +105,15 @@ function settarget {
   target=$1
 }
 
+function setroot {
+  rootdir=$1
+}
+
 branch_name="$(git symbolic-ref HEAD 2>/dev/null)" || branch_name="(unnamed branch)"
 branch_name=${branch_name##refs/heads/}
 
 sync_file=sync.files
+rootdir=$HOME
 target=$PWD
 cmd=none
 
@@ -119,6 +146,9 @@ for arg in $@; do
     -t)
       cmd=settarget
       ;;
+    -e)
+      cmd=exclude
+      ;;
     -h)
       showhelp
       ;;
@@ -128,37 +158,12 @@ for arg in $@; do
   esac
 done
 
-for i in ${!funcs[@]}; do
-  case ${funcs[$i]} in
-    setfile*)
-      ${funcs[$i]}
-      break
-      ;;
-  esac
-done
-for i in ${!funcs[@]}; do
-  case ${funcs[$i]} in
-    settarget*)
-      ${funcs[$i]}
-      break
-      ;;
-  esac
-done
-for i in ${!funcs[@]}; do
-  case ${funcs[$i]} in
-    add*)
-      ${funcs[$i]}
-      ;;
-  esac
-done
+findandexec settarget true
+findandexec setfile   true
+findandexec add       false
+findandexec exclude   false
+eval sync
+findandexec commit    true
+findandexec push      true
 
-copy
-
-for i in ${!funcs[@]}; do
-  [ "${funcs[$i]}" = "commit" ] && commit && break
-done
-for i in ${!funcs[@]}; do
-  [ "${funcs[$i]}" = "push" ] && push && break
-done
-
-msg "Done!" false && exit 0
+msg Done! false && exit 0
